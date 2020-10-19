@@ -72,6 +72,15 @@ resource "azurerm_subnet_network_security_group_association" "app_subnet_nsg_ass
 }
 
 ##############################################################################
+# * Application Insights
+resource "azurerm_application_insights" "ai" {
+  name                = var.application_insights_name
+  location            = var.location
+  resource_group_name = azurerm_resource_group.group.name
+  application_type    = "web"
+}
+
+##############################################################################
 # * Windows Virtual Machine
 resource "azurerm_network_interface" "win_vm_nic" {
   name                = "${var.win_vm_name}-nic"

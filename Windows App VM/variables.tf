@@ -45,6 +45,11 @@ variable "app_subnet_nsg_name" {
   default     = "app-subnet-nsg"
 }
 
+variable "application_insights_name" {
+  description = "The name of the Application Insights instance."
+  default     = "demo-ai"
+}
+
 variable "admin_username" {
   description = "Administrator user name."
   default     = "adminuser"
