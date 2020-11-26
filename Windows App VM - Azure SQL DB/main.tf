@@ -11,11 +11,18 @@
 provider "azurerm" {
   version = "=2.20.0"
   subscription_id = var.subscription_id
+  partner_id = "5fafed62-3b35-4c85-9cc7-61af1dacb6c7"
   features {}
 }
 
 provider "random" {
   version = "=2.3"
+}
+
+# Import existing custom images
+data "azurerm_image" "app_image" {
+  name                = "${var.app_name}-image"
+  resource_group_name = var.image_resource_group_name
 }
 
 resource "azurerm_resource_group" "group" {
@@ -130,17 +137,11 @@ resource "azurerm_windows_virtual_machine" "app" {
   size                = "Standard_DS12_v2"
   admin_username      = var.admin_username
   admin_password      = var.admin_password
+  source_image_id     = data.azurerm_image.app_image.id
 
   network_interface_ids = [
     azurerm_network_interface.app_nic.id
   ]
-
-  source_image_reference {
-    publisher = "MicrosoftWindowsServer"
-    offer     = "WindowsServer"
-    sku       = "2019-Datacenter"
-    version   = "latest"
-  }
 
   os_disk {
     name                  = "${var.app_name}-osdisk"
@@ -153,9 +154,45 @@ resource "azurerm_windows_virtual_machine" "app" {
   }
 }
 
+resource "azurerm_network_interface" "app2_nic" {
+  name                = "${var.app_name}2-nic"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.group.name
+
+  ip_configuration {
+    name                          = "${var.app_name}2-ipconfig"
+    subnet_id                     = azurerm_subnet.app_subnet.id
+    private_ip_address_allocation = "Dynamic"
+  }
+}
+
+resource "azurerm_windows_virtual_machine" "app2" {
+  name                = "${var.app_name}2"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.group.name
+  size                = "Standard_DS12_v2"
+  admin_username      = var.admin_username
+  admin_password      = var.admin_password
+  source_image_id     = data.azurerm_image.app_image.id
+
+  network_interface_ids = [
+    azurerm_network_interface.app2_nic.id
+  ]
+
+  os_disk {
+    name                  = "${var.app_name}2-osdisk"
+    storage_account_type  = "Standard_LRS"
+    caching               = "ReadWrite"
+  }
+
+  boot_diagnostics {
+    storage_account_uri = azurerm_storage_account.diagnostics.primary_blob_endpoint
+  }
+}
+
 ##############################################################################
 # * Application Gateway
-resource "azurerm_public_ip" "app_ip" {
+resource "azurerm_public_ip" "appgw_ip" {
   name                = "${var.app_name}-pip"
   location            = var.location
   resource_group_name = azurerm_resource_group.group.name
@@ -163,41 +200,42 @@ resource "azurerm_public_ip" "app_ip" {
   sku                 = "Basic"
 }
 
-resource "azurerm_application_gateway" "app" {
+resource "azurerm_application_gateway" "appgw" {
   name                = "${var.app_name}gw"
   location            = var.location
   resource_group_name = azurerm_resource_group.group.name
 
   sku {
-    name     = "Standard_Small"
-    tier     = "Standard"
+    name     = "WAF_Medium"
+    tier     = "WAF"
     capacity = 1
   }
 
   gateway_ip_configuration {
-    name      = "${var.app_name}-ipconfig"
+    name      = "${var.app_name}gw-ipconfig"
     subnet_id = azurerm_subnet.public_subnet.id
   }
 
   frontend_port {
-    name = "${var.app_name}-http-port"
+    name = "${var.app_name}gw-http-port"
     port = 80
   }
 
   frontend_ip_configuration {
-    name                 = "${var.app_name}-frontend-ipconfig"
-    public_ip_address_id = azurerm_public_ip.app_ip.id
+    name                 = "${var.app_name}gw-frontend-ipconfig"
+    public_ip_address_id = azurerm_public_ip.appgw_ip.id
   }
 
   backend_address_pool {
-    name          = "${var.app_name}-backend-pool"
+    name          = "${var.app_name}gw-backend-pool"
     ip_addresses  = [
-      azurerm_windows_virtual_machine.app.private_ip_address
+      azurerm_windows_virtual_machine.app.private_ip_address,
+      azurerm_windows_virtual_machine.app2.private_ip_address
     ]
   }
 
   backend_http_settings {
-    name                  = "${var.app_name}-http-settings"
+    name                  = "${var.app_name}gw-http-settings"
     cookie_based_affinity = "Disabled"
     port                  = 80
     protocol              = "Http"
@@ -205,30 +243,31 @@ resource "azurerm_application_gateway" "app" {
   }
 
   http_listener {
-    name                           = "${var.app_name}-http-listener"
-    frontend_ip_configuration_name = "${var.app_name}-frontend-ipconfig"
-    frontend_port_name             = "${var.app_name}-http-port"
+    name                           = "${var.app_name}gw-http-listener"
+    frontend_ip_configuration_name = "${var.app_name}gw-frontend-ipconfig"
+    frontend_port_name             = "${var.app_name}gw-http-port"
     protocol                       = "Http"
   }
 
   request_routing_rule {
-    name                       = "${var.app_name}-http-rule"
+    name                       = "${var.app_name}gw-http-rule"
     rule_type                  = "Basic"
-    http_listener_name         = "${var.app_name}-http-listener"
-    backend_address_pool_name  = "${var.app_name}-backend-pool"
-    backend_http_settings_name = "${var.app_name}-http-settings"
+    http_listener_name         = "${var.app_name}gw-http-listener"
+    backend_address_pool_name  = "${var.app_name}gw-backend-pool"
+    backend_http_settings_name = "${var.app_name}gw-http-settings"
   }
 }
 
 ##############################################################################
 # * SQL Azure Database
 resource "azurerm_mssql_server" "db_server" {
-  name                         = "${var.db_name}-server"
-  location                     = var.location
-  resource_group_name          = azurerm_resource_group.group.name
-  version                      = "12.0"
-  administrator_login          = var.db_admin_username
-  administrator_login_password = var.db_admin_password
+  name                          = "${var.db_name}-server"
+  location                      = var.location
+  resource_group_name           = azurerm_resource_group.group.name
+  version                       = "12.0"
+  administrator_login           = var.db_admin_username
+  administrator_login_password  = var.db_admin_password
+  public_network_access_enabled = false
 }
 
 resource "azurerm_mssql_database" "db" {

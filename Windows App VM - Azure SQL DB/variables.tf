@@ -15,6 +15,11 @@ variable "location" {
   default     = "southeastasia"
 }
 
+variable "image_resource_group_name" {
+  description = "The name of your Azure Resource Group that contains VM images."
+  default     = "image-rg"
+}
+
 variable "resource_group_name" {
   description = "The name of your Azure Resource Group."
   default     = "demo-rg"
