@@ -31,23 +31,13 @@ variable "virtual_network_address_space" {
 }
 
 variable "app_subnet_prefix" {
-  description = "The address prefix to use for the subnet."
-  default     = "192.168.0.64/28"
-}
-
-variable "diag_storage_prefix" {
-  description = "The storage account prefix for diagnostics collection."
-  default     = "demodiag"
+  description = "The address prefix to use for the Application subnet."
+  default     = "192.168.0.0/28"
 }
 
 variable "app_subnet_nsg_name" {
   description = "The name of the NSG for the Application subnet."
   default     = "app-subnet-nsg"
-}
-
-variable "application_insights_name" {
-  description = "The name of the Application Insights instance."
-  default     = "demo-ai"
 }
 
 variable "admin_username" {
