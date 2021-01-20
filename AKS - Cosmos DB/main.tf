@@ -1,15 +1,24 @@
 ##############################################################################
+# Minimum Terraform version required: 0.13
 # This Terraform configuration will create the following:
 #
 # Resource group with a virtual network and standard subnets
 # An Ubuntu Linux server running Apache
-
 ##############################################################################
 # * Shared infrastructure resources
 
+# Configure the top-level Terraform block
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 2.40.0"
+    }
+  }
+}
+
 # Configure the Azure Provider
 provider "azurerm" {
-  version         = "=2.40.0"
   subscription_id = var.subscription_id
   features {}
 }
@@ -44,6 +53,32 @@ resource "azurerm_container_registry" "acr" {
 }
 
 ##############################################################################
+# * Logging Container Insights
+resource "random_id" "la_workspace_name_suffix" {
+    byte_length = 8
+}
+
+resource "azurerm_log_analytics_workspace" "la_workspace" {
+    name                = "p-bzx-${random_id.la_workspace_name_suffix.dec}"
+    location            = var.location
+    resource_group_name = azurerm_resource_group.group.name
+    sku                 = "Free"
+}
+
+resource "azurerm_log_analytics_solution" "la_solution_containerinsights" {
+    solution_name         = "ContainerInsights"
+    location              = var.location
+    resource_group_name   = azurerm_resource_group.group.name
+    workspace_resource_id = azurerm_log_analytics_workspace.la_workspace.id
+    workspace_name        = azurerm_log_analytics_workspace.la_workspace.name
+
+    plan {
+        publisher = "Microsoft"
+        product   = "OMSGallery/ContainerInsights"
+    }
+}
+
+##############################################################################
 # * Kubernetes Cluster
 resource "azurerm_kubernetes_cluster" "aks" {
   name                = var.cluster_name
@@ -51,30 +86,38 @@ resource "azurerm_kubernetes_cluster" "aks" {
   resource_group_name = azurerm_resource_group.group.name
   dns_prefix          = var.kubernetes_dns_prefix
   kubernetes_version  = "1.18.10"
+  node_resource_group = "p-bzx-nodes-rg"
 
   default_node_pool {
     name       = "default"
     node_count = 1
-    vm_size    = "Standard_D2_v2"
+    vm_size    = "Standard_D2as_v4"
   }
 
   identity {
     type = "SystemAssigned"
   }
 
-  linux_profile {
-    admin_username = "badmin"
-    ssh_key {
-      key_data = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDi7Ad3zVh+lr/ATZn+njbba9SU1IEqcuARjWqEpV6a6slga8iCXaeWwZlrC5VTneJ5ov05IChxrR6UgF86kRn58hVBVZuLTJID58lL4NwAt0Is3IoDgH+EzQZV0EIA/xMyW2kpqZvdtonCFI390pGbOOGLrT3WXYFHwKRd+ZPj3Od/pQh/dIWHMa2FC6idFWFBsSAaAIriuWheYIJncTxDq28zHQW5HIALtxsbyeHQ76j7Iu8TJDDfupAMQhC+OXcm5z86+qwPXnjvhZy/iio8XhvkzJ6aQlmW70NFjfk0gHCb3riMVuXI9HmyHl8mJv7y2v41gyfgIobNm3sjJ4TNlk6RxOcQZa0cXs+TUa5kPMsBrkX3/vfACpiNr+Y3Mx5iqXWaKScS+vGiATKPlhKKuLCdYjH0rPI7eo9q7KaoPUAvanHV6bIjh1kgvubIhC9jTcR5U8ZVAsX2pardOj69+NTgxIqHH9pK6QnqJR5xTaZRYcZOHsJucrG2peJ5p7U= generated-by-azure"
-    }
-  }
+  # linux_profile {
+  #   admin_username = "badmin"
+  #   ssh_key {
+  #     key_data = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDi7Ad3zVh+lr/ATZn+njbba9SU1IEqcuARjWqEpV6a6slga8iCXaeWwZlrC5VTneJ5ov05IChxrR6UgF86kRn58hVBVZuLTJID58lL4NwAt0Is3IoDgH+EzQZV0EIA/xMyW2kpqZvdtonCFI390pGbOOGLrT3WXYFHwKRd+ZPj3Od/pQh/dIWHMa2FC6idFWFBsSAaAIriuWheYIJncTxDq28zHQW5HIALtxsbyeHQ76j7Iu8TJDDfupAMQhC+OXcm5z86+qwPXnjvhZy/iio8XhvkzJ6aQlmW70NFjfk0gHCb3riMVuXI9HmyHl8mJv7y2v41gyfgIobNm3sjJ4TNlk6RxOcQZa0cXs+TUa5kPMsBrkX3/vfACpiNr+Y3Mx5iqXWaKScS+vGiATKPlhKKuLCdYjH0rPI7eo9q7KaoPUAvanHV6bIjh1kgvubIhC9jTcR5U8ZVAsX2pardOj69+NTgxIqHH9pK6QnqJR5xTaZRYcZOHsJucrG2peJ5p7U= generated-by-azure"
+  #   }
+  # }
 
-  network_profile {
-    network_plugin     = "azure"
-    network_policy     = "azure"
-    dns_service_ip     = "10.0.0.10"
-    docker_bridge_cidr = "172.17.0.1/16"
-    service_cidr       = "10.0.0.0/16"
+  # network_profile {
+  #   network_plugin     = "azure"
+  #   network_policy     = "azure"
+  #   dns_service_ip     = "10.0.0.10"
+  #   docker_bridge_cidr = "172.17.0.1/16"
+  #   service_cidr       = "10.0.0.0/16"
+  # }
+
+  addon_profile {
+    oms_agent {
+      enabled                    = true
+      log_analytics_workspace_id = azurerm_log_analytics_workspace.la_workspace.id
+    }
   }
 
   role_based_access_control {
@@ -82,6 +125,12 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 }
 
+resource "azurerm_role_assignment" "aks_mi_role_acrpull" {
+  scope                            = "/subscriptions/${var.subscription_id}/resourceGroups/${azurerm_resource_group.group.name}"
+  role_definition_name             = "AcrPull"
+  principal_id                     = azurerm_kubernetes_cluster.aks.identity[0].principal_id
+  skip_service_principal_aad_check = true
+}
 
 # ##############################################################################
 # # * Application Gateway
