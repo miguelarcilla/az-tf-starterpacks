@@ -23,15 +23,19 @@ provider "azurerm" {
   features {}
 }
 
+resource "random_id" "solution_random_suffix" {
+    byte_length = 8
+}
+
 resource "azurerm_resource_group" "group" {
-  name     = var.resource_group_name
+  name     = "${var.solution_prefix}-rg"
   location = var.location
 }
 
 resource "azurerm_virtual_network" "vnet" {
-  name                = var.virtual_network_name
+  name                = "${var.solution_prefix}-vnet"
   location            = var.location
-  address_space       = ["172.16.0.0/16"]
+  address_space       = ["172.16.0.0/20"]
   resource_group_name = azurerm_resource_group.group.name
 }
 
@@ -39,13 +43,13 @@ resource "azurerm_subnet" "kubernetes_subnet" {
   name                 = "KubernetesSubnet"
   virtual_network_name = azurerm_virtual_network.vnet.name
   resource_group_name  = azurerm_resource_group.group.name
-  address_prefixes     = ["172.16.128.0/17"]
+  address_prefixes     = ["172.16.0.0/22"]
 }
 
 ##############################################################################
 # * Container Registry
 resource "azurerm_container_registry" "acr" {
-  name                = var.acr_name
+  name                = "${var.solution_prefix}acr"
   location            = var.location
   resource_group_name = azurerm_resource_group.group.name
   sku                 = "Basic"
@@ -54,12 +58,8 @@ resource "azurerm_container_registry" "acr" {
 
 ##############################################################################
 # * Logging Container Insights
-resource "random_id" "la_workspace_name_suffix" {
-    byte_length = 8
-}
-
 resource "azurerm_log_analytics_workspace" "la_workspace" {
-    name                = "p-bzx-${random_id.la_workspace_name_suffix.dec}"
+    name                = "${var.solution_prefix}-${random_id.solution_random_suffix.dec}-workspace"
     location            = var.location
     resource_group_name = azurerm_resource_group.group.name
     sku                 = "Free"
@@ -79,14 +79,38 @@ resource "azurerm_log_analytics_solution" "la_solution_containerinsights" {
 }
 
 ##############################################################################
+# * Static Web Files Storage Account
+resource "azurerm_storage_account" "static_web_storage" {
+    name                     = "${var.solution_prefix}${random_id.solution_random_suffix.dec}"
+    resource_group_name      = azurerm_resource_group.group.name
+    location                 = var.location
+    account_replication_type = "LRS"
+    account_tier             = "Standard"
+    account_kind             = "StorageV2"
+
+    static_website {
+      index_document = "index.html"
+    }
+}
+
+resource "azurerm_storage_blob" "static_web_file_index_html" {
+  name                   = "index.html"
+  storage_account_name   = azurerm_storage_account.static_web_storage.name
+  storage_container_name = "$web"
+  type                   = "Block"
+  content_type           = "text/html"
+  source                 = "web/index.html"
+}
+
+##############################################################################
 # * Kubernetes Cluster
 resource "azurerm_kubernetes_cluster" "aks" {
-  name                = var.cluster_name
+  name                = "${var.solution_prefix}-aks"
   location            = var.location
   resource_group_name = azurerm_resource_group.group.name
-  dns_prefix          = var.kubernetes_dns_prefix
+  dns_prefix          = var.solution_prefix
   kubernetes_version  = "1.18.10"
-  node_resource_group = "p-bzx-nodes-rg"
+  node_resource_group = "${var.solution_prefix}-nodes-rg"
 
   default_node_pool {
     name       = "default"
@@ -99,6 +123,10 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 
   addon_profile {
+    kube_dashboard {
+      enabled = false
+    }
+
     oms_agent {
       enabled                    = true
       log_analytics_workspace_id = azurerm_log_analytics_workspace.la_workspace.id

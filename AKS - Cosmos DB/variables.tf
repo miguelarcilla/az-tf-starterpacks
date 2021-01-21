@@ -15,27 +15,7 @@ variable "location" {
   default     = "southeastasia"
 }
 
-variable "resource_group_name" {
+variable "solution_prefix" {
   description = "The name of the Azure Resource Group."
-  default     = "demo-rg"
-}
-
-variable "virtual_network_name" {
-  description = "The name of the virtual network."
-  default     = "demo-vnet"
-}
-
-variable "acr_name" {
-  description = "The name of the Azure Container Registry."
-  default     = "demoacr"
-}
-
-variable "cluster_name" {
-  description = "The name of the AKS Cluster."
-  default     = "demo-aks-cluster"
-}
-
-variable "kubernetes_dns_prefix" {
-  description = "The DNS prefix to apply to Kubernetes nodes."
-  default     = "demoDNS"
+  default     = "demo"
 }
