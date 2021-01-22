@@ -9,3 +9,11 @@
 output "_instructions" {
   value = "This output contains plain text. You can add variables too."
 }
+
+output "identity_resource_id" {
+    value = azurerm_user_assigned_identity.aks_mi.id
+}
+
+output "identity_client_id" {
+    value = azurerm_user_assigned_identity.aks_mi.client_id
+}

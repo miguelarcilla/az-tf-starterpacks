@@ -12,7 +12,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 2.40.0"
+      version = "~> 2.44.0"
     }
   }
 }
@@ -44,6 +44,13 @@ resource "azurerm_subnet" "kubernetes_subnet" {
   virtual_network_name = azurerm_virtual_network.vnet.name
   resource_group_name  = azurerm_resource_group.group.name
   address_prefixes     = ["172.16.0.0/22"]
+}
+
+resource "azurerm_subnet" "appgw_subnet" {
+  name                 = "AppGatewaySubnet"
+  virtual_network_name = azurerm_virtual_network.vnet.name
+  resource_group_name  = azurerm_resource_group.group.name
+  address_prefixes     = ["172.16.4.0/22"]
 }
 
 ##############################################################################
@@ -104,6 +111,12 @@ resource "azurerm_storage_blob" "static_web_file_index_html" {
 
 ##############################################################################
 # * Kubernetes Cluster
+resource "azurerm_user_assigned_identity" "aks_mi" {
+  name                = "${var.solution_prefix}-aks-mi"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.group.name
+}
+
 resource "azurerm_kubernetes_cluster" "aks" {
   name                = "${var.solution_prefix}-aks"
   location            = var.location
@@ -113,17 +126,23 @@ resource "azurerm_kubernetes_cluster" "aks" {
   node_resource_group = "${var.solution_prefix}-nodes-rg"
 
   default_node_pool {
-    name       = "default"
-    node_count = 1
-    vm_size    = "Standard_D2as_v4"
+    name            = "agentpool"
+    node_count      = 1
+    vm_size         = "Standard_D2as_v4"
+    vnet_subnet_id  = azurerm_subnet.kubernetes_subnet.id
   }
 
   identity {
-    type = "SystemAssigned"
+    type                      = "UserAssigned"
+    user_assigned_identity_id = azurerm_user_assigned_identity.aks_mi.id
   }
 
   addon_profile {
     kube_dashboard {
+      enabled = false
+    }
+
+    http_application_routing {
       enabled = false
     }
 
@@ -134,83 +153,102 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 
   role_based_access_control {
-    enabled = true
+    enabled = false
   }
 }
 
+resource "azurerm_role_assignment" "aks_mi_role_rgreader" {
+  scope                = azurerm_resource_group.group.id
+  role_definition_name = "Reader"
+  principal_id         = azurerm_user_assigned_identity.aks_mi.principal_id
+}
+
+resource "azurerm_role_assignment" "aks_mi_role_networkcontributor" {
+  scope                = azurerm_subnet.kubernetes_subnet.id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_user_assigned_identity.aks_mi.principal_id
+}
+
 resource "azurerm_role_assignment" "aks_mi_role_acrpull" {
-  scope                            = azurerm_container_registry.acr.id
-  role_definition_name             = "AcrPull"
-  principal_id                     = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+  scope                = azurerm_container_registry.acr.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
 }
 
 # ##############################################################################
 # # * Application Gateway
-# resource "azurerm_public_ip" "appgw_ip" {
-#   name                = "${var.app_name}-pip"
-#   location            = var.location
-#   resource_group_name = azurerm_resource_group.group.name
-#   allocation_method   = "Dynamic"
-#   sku                 = "Basic"
-# }
+resource "azurerm_public_ip" "appgw_ip" {
+  name                = "${var.solution_prefix}-appgw-pip"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.group.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
 
-# resource "azurerm_application_gateway" "appgw" {
-#   name                = "${var.app_name}gw"
-#   location            = var.location
-#   resource_group_name = azurerm_resource_group.group.name
+resource "azurerm_application_gateway" "appgw" {
+  name                = "${var.solution_prefix}-appgw"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.group.name
 
-#   sku {
-#     name     = "WAF_Medium"
-#     tier     = "WAF"
-#     capacity = 1
-#   }
+  sku {
+    name     = "WAF_v2"
+    tier     = "WAF_v2"
+    capacity = 2
+  }
 
-#   gateway_ip_configuration {
-#     name      = "${var.app_name}gw-ipconfig"
-#     subnet_id = azurerm_subnet.public_subnet.id
-#   }
+  gateway_ip_configuration {
+    name      = "${var.solution_prefix}-appgw-ipconfig"
+    subnet_id = azurerm_subnet.appgw_subnet.id
+  }
 
-#   frontend_port {
-#     name = "${var.app_name}gw-http-port"
-#     port = 80
-#   }
+  frontend_port {
+    name = "${var.solution_prefix}-appgw-http-port"
+    port = 80
+  }
 
-#   frontend_ip_configuration {
-#     name                 = "${var.app_name}gw-frontend-ipconfig"
-#     public_ip_address_id = azurerm_public_ip.appgw_ip.id
-#   }
+  frontend_port {
+    name = "${var.solution_prefix}-appgw-https-port"
+    port = 443
+  }
 
-#   backend_address_pool {
-#     name          = "${var.app_name}gw-backend-pool"
-#     ip_addresses  = [
-#       azurerm_windows_virtual_machine.app.private_ip_address,
-#       azurerm_windows_virtual_machine.app2.private_ip_address
-#     ]
-#   }
+  frontend_ip_configuration {
+    name                 = "${var.solution_prefix}-appgw-frontend-ipconfig"
+    public_ip_address_id = azurerm_public_ip.appgw_ip.id
+  }
 
-#   backend_http_settings {
-#     name                  = "${var.app_name}gw-http-settings"
-#     cookie_based_affinity = "Disabled"
-#     port                  = 80
-#     protocol              = "Http"
-#     request_timeout       = 10
-#   }
+  backend_address_pool {
+    name          = "${var.solution_prefix}-appgw-backend-pool"
+  }
 
-#   http_listener {
-#     name                           = "${var.app_name}gw-http-listener"
-#     frontend_ip_configuration_name = "${var.app_name}gw-frontend-ipconfig"
-#     frontend_port_name             = "${var.app_name}gw-http-port"
-#     protocol                       = "Http"
-#   }
+  backend_http_settings {
+    name                  = "${var.solution_prefix}-appgw-http-settings"
+    cookie_based_affinity = "Disabled"
+    port                  = 80
+    protocol              = "Http"
+    request_timeout       = 1
+  }
 
-#   request_routing_rule {
-#     name                       = "${var.app_name}gw-http-rule"
-#     rule_type                  = "Basic"
-#     http_listener_name         = "${var.app_name}gw-http-listener"
-#     backend_address_pool_name  = "${var.app_name}gw-backend-pool"
-#     backend_http_settings_name = "${var.app_name}gw-http-settings"
-#   }
-# }
+  http_listener {
+    name                           = "${var.solution_prefix}-appgw-http-listener"
+    frontend_ip_configuration_name = "${var.solution_prefix}-appgw-frontend-ipconfig"
+    frontend_port_name             = "${var.solution_prefix}-appgw-http-port"
+    protocol                       = "Http"
+  }
+
+  request_routing_rule {
+    name                       = "${var.solution_prefix}-appgw-http-rule"
+    rule_type                  = "Basic"
+    http_listener_name         = "${var.solution_prefix}-appgw-http-listener"
+    backend_address_pool_name  = "${var.solution_prefix}-appgw-backend-pool"
+    backend_http_settings_name = "${var.solution_prefix}-appgw-http-settings"
+  }
+}
+
+resource "azurerm_role_assignment" "aks_mi_role_appgwcontributor" {
+  scope                = azurerm_application_gateway.appgw.id
+  role_definition_name = "Contributor"
+  principal_id         = azurerm_user_assigned_identity.aks_mi.principal_id
+}
 
 # ##############################################################################
 # # * SQL Azure Database
