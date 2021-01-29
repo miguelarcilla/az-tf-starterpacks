@@ -111,11 +111,6 @@ resource "azurerm_storage_blob" "static_web_file_index_html" {
 
 ##############################################################################
 # * Kubernetes Cluster
-resource "azurerm_user_assigned_identity" "aks_mi" {
-  name                = "${var.solution_prefix}-aks-mi"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.group.name
-}
 
 resource "azurerm_kubernetes_cluster" "aks" {
   name                = "${var.solution_prefix}-aks"
@@ -133,8 +128,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 
   identity {
-    type                      = "UserAssigned"
-    user_assigned_identity_id = azurerm_user_assigned_identity.aks_mi.id
+    type = "SystemAssigned"
   }
 
   addon_profile {
@@ -157,22 +151,25 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 }
 
-resource "azurerm_role_assignment" "aks_mi_role_rgreader" {
-  scope                = azurerm_resource_group.group.id
-  role_definition_name = "Reader"
-  principal_id         = azurerm_user_assigned_identity.aks_mi.principal_id
+resource "azurerm_role_assignment" "aks_role_rgmioperator" {
+  scope                = "/subscriptions/${var.subscription_id}/resourceGroups/${azurerm_kubernetes_cluster.aks.node_resource_group}"
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+  depends_on           = [azurerm_kubernetes_cluster.aks]
 }
 
-resource "azurerm_role_assignment" "aks_mi_role_networkcontributor" {
-  scope                = azurerm_subnet.kubernetes_subnet.id
-  role_definition_name = "Network Contributor"
-  principal_id         = azurerm_user_assigned_identity.aks_mi.principal_id
+resource "azurerm_role_assignment" "aks_role_rgvmcontributor" {
+  scope                = "/subscriptions/${var.subscription_id}/resourceGroups/${azurerm_kubernetes_cluster.aks.node_resource_group}"
+  role_definition_name = "Virtual Machine Contributor"
+  principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+  depends_on           = [azurerm_kubernetes_cluster.aks]
 }
 
-resource "azurerm_role_assignment" "aks_mi_role_acrpull" {
+resource "azurerm_role_assignment" "aks_role_acrpull" {
   scope                = azurerm_container_registry.acr.id
   role_definition_name = "AcrPull"
   principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+  depends_on           = [azurerm_kubernetes_cluster.aks, azurerm_container_registry.acr]
 }
 
 # ##############################################################################
@@ -244,10 +241,11 @@ resource "azurerm_application_gateway" "appgw" {
   }
 }
 
-resource "azurerm_role_assignment" "aks_mi_role_appgwcontributor" {
+resource "azurerm_role_assignment" "aks_role_appgwcontributor" {
   scope                = azurerm_application_gateway.appgw.id
   role_definition_name = "Contributor"
-  principal_id         = azurerm_user_assigned_identity.aks_mi.principal_id
+  principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+  depends_on           = [azurerm_kubernetes_cluster.aks, azurerm_application_gateway.appgw]
 }
 
 # ##############################################################################

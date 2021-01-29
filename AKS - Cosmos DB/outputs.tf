@@ -10,10 +10,10 @@ output "_instructions" {
   value = "This output contains plain text. You can add variables too."
 }
 
-output "identity_resource_id" {
-    value = azurerm_user_assigned_identity.aks_mi.id
+output "kubelet_identity_client_id" {
+    value = azurerm_kubernetes_cluster.aks.kubelet_identity[0].client_id
 }
 
-output "identity_client_id" {
-    value = azurerm_user_assigned_identity.aks_mi.client_id
+output "aks_node_resource_group" {
+    value = azurerm_kubernetes_cluster.aks.node_resource_group
 }
