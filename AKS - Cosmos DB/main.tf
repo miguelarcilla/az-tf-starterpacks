@@ -12,7 +12,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 2.44.0"
+      version = "~> 2.45.0"
     }
   }
 }
@@ -102,30 +102,36 @@ resource "azurerm_log_analytics_solution" "la_solution_containerinsights" {
 
 ##############################################################################
 # * Static Web Files Storage Account
-resource "azurerm_storage_account" "static_web_storage" {
-    name                     = "${var.solution_prefix}${random_id.solution_random_suffix.dec}"
-    resource_group_name      = azurerm_resource_group.group.name
-    location                 = var.location
-    account_replication_type = "LRS"
-    account_tier             = "Standard"
-    account_kind             = "StorageV2"
+# resource "azurerm_storage_account" "static_web_storage" {
+#     name                     = "${var.solution_prefix}${random_id.solution_random_suffix.dec}"
+#     resource_group_name      = azurerm_resource_group.group.name
+#     location                 = var.location
+#     account_replication_type = "LRS"
+#     account_tier             = "Standard"
+#     account_kind             = "StorageV2"
 
-    static_website {
-      index_document = "index.html"
-    }
-}
+#     static_website {
+#       index_document = "index.html"
+#     }
+# }
 
-resource "azurerm_storage_blob" "static_web_file_index_html" {
-  name                   = "index.html"
-  storage_account_name   = azurerm_storage_account.static_web_storage.name
-  storage_container_name = "$web"
-  type                   = "Block"
-  content_type           = "text/html"
-  source                 = "web/index.html"
-}
+# resource "azurerm_storage_blob" "static_web_file_index_html" {
+#   name                   = "index.html"
+#   storage_account_name   = azurerm_storage_account.static_web_storage.name
+#   storage_container_name = "$web"
+#   type                   = "Block"
+#   content_type           = "text/html"
+#   source                 = "web/index.html"
+# }
 
 ##############################################################################
 # * Kubernetes Cluster
+resource "azurerm_user_assigned_identity" "aks_mi" {
+  name                = "${var.solution_prefix}-aks-cluster-mi"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.group.name
+}
+
 resource "azurerm_kubernetes_cluster" "aks" {
   name                = "${var.solution_prefix}-aks"
   location            = var.location
@@ -142,7 +148,13 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 
   identity {
-    type = "SystemAssigned"
+    type = "UserAssigned"
+    user_assigned_identity_id = azurerm_user_assigned_identity.aks_mi.id
+  }
+
+  network_profile {
+    network_plugin = "azure"
+    network_policy = "azure"
   }
 
   addon_profile {
@@ -163,6 +175,27 @@ resource "azurerm_kubernetes_cluster" "aks" {
   role_based_access_control {
     enabled = false
   }
+}
+
+resource "azurerm_role_assignment" "aks_role_mioperator" {
+  scope                = azurerm_user_assigned_identity.aks_mi.id
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = azurerm_user_assigned_identity.aks_mi.principal_id
+  depends_on           = [azurerm_kubernetes_cluster.aks]
+}
+
+resource "null_resource" "aks_update" {
+  provisioner "local-exec" {
+    command = "az aks update -g ${azurerm_resource_group.group.name} -n ${azurerm_kubernetes_cluster.aks.name} --enable-pod-identity"
+  }
+  depends_on = [azurerm_kubernetes_cluster.aks, azurerm_role_assignment.aks_role_mioperator]
+}
+
+resource "null_resource" "aks_add_podidentity" {
+  provisioner "local-exec" {
+    command = "az aks pod-identity add --namespace weather-share -g ${azurerm_resource_group.group.name} --cluster-name ${azurerm_kubernetes_cluster.aks.name} --name ${azurerm_user_assigned_identity.aks_mi.name} --identity-resource-id ${azurerm_user_assigned_identity.aks_mi.id}"
+  }
+  depends_on = [azurerm_kubernetes_cluster.aks, null_resource.aks_update, azurerm_role_assignment.aks_role_mioperator]
 }
 
 resource "azurerm_role_assignment" "aks_role_rgmioperator" {
@@ -270,18 +303,36 @@ resource "azurerm_key_vault" "keyvault" {
   resource_group_name = azurerm_resource_group.group.name
   sku_name            = "standard"
   tenant_id           = data.azurerm_client_config.current.tenant_id
+}
 
-  access_policy {
-    tenant_id = data.azurerm_client_config.current.tenant_id
-    object_id = data.azurerm_client_config.current.object_id
+resource "azurerm_key_vault_access_policy" "keyvault_currentuser_policy" {
+  key_vault_id = azurerm_key_vault.keyvault.id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = data.azurerm_client_config.current.object_id
 
-    secret_permissions = [
-      "get",
-      "list",
-      "set",
-      "delete"
-    ]
-  }
+  secret_permissions = [
+    "get",
+    "list",
+    "set",
+    "delete"
+  ]
+}
+
+resource "azurerm_key_vault_access_policy" "keyvault_azcli_policy" {
+  key_vault_id = azurerm_key_vault.keyvault.id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+
+  secret_permissions = [
+    "get",
+    "list",
+    "set",
+    "delete",
+    "recover",
+    "backup",
+    "restore",
+    "purge"
+  ]
 }
 
 resource "azurerm_key_vault_access_policy" "keyvault_aks_policy" {
@@ -297,16 +348,31 @@ resource "azurerm_key_vault_access_policy" "keyvault_aks_policy" {
   ]
 }
 
+resource "azurerm_key_vault_access_policy" "keyvault_aksmi_policy" {
+  key_vault_id = azurerm_key_vault.keyvault.id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = azurerm_user_assigned_identity.aks_mi.principal_id
+
+  secret_permissions = [
+    "get",
+    "list",
+    "set",
+    "delete"
+  ]
+}
+
 resource "azurerm_key_vault_secret" "keyvault_secret_mssql_dbadmin" {
   name         = "mssql-dbadmin"
   value        = "4dm1n157r470r"
   key_vault_id = azurerm_key_vault.keyvault.id
+  depends_on   = [azurerm_key_vault_access_policy.keyvault_currentuser_policy , azurerm_key_vault_access_policy.keyvault_azcli_policy]
 }
 
 resource "azurerm_key_vault_secret" "keyvault_secret_mssql_dbpassword" {
   name         = "mssql-password"
   value        = "4-v3ry-53cr37-p455w0rd"
   key_vault_id = azurerm_key_vault.keyvault.id
+  depends_on   = [azurerm_key_vault_access_policy.keyvault_currentuser_policy , azurerm_key_vault_access_policy.keyvault_azcli_policy]
 }
 
 ##############################################################################
@@ -350,7 +416,7 @@ resource "azurerm_private_dns_a_record" "db_private_endpoint_a_record" {
   name                = azurerm_mssql_server.db_server.name
   zone_name           = azurerm_private_dns_zone.db_private_dns_zone.name
   resource_group_name = azurerm_resource_group.group.name
-  ttl                 = 300
+  ttl                 = 10
   records             = [azurerm_private_endpoint.db_private_endpoint.private_service_connection.0.private_ip_address]
 }
 
@@ -359,10 +425,12 @@ resource "azurerm_private_dns_zone_virtual_network_link" "db_private_dns_zone_vn
   resource_group_name   = azurerm_resource_group.group.name
   private_dns_zone_name = azurerm_private_dns_zone.db_private_dns_zone.name
   virtual_network_id    = azurerm_virtual_network.vnet.id
+  registration_enabled  = true
 }
 
 resource "azurerm_key_vault_secret" "keyvault_secret_mssql_dbconnstr" {
   name         = "mssql-dbconnstr"
-  value        = "Server=tcp:${var.solution_prefix}-db-server.database.windows.net,1433;Initial Catalog=${var.solution_prefix}-db;Persist Security Info=False;User ID=${azurerm_key_vault_secret.keyvault_secret_mssql_dbadmin.value};Password=${azurerm_key_vault_secret.keyvault_secret_mssql_dbpassword.value};MultipleActiveResultSets=True;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
+  value        = "Server=tcp:${azurerm_private_dns_a_record.db_private_endpoint_a_record.fqdn},1433;Initial Catalog=${var.solution_prefix}-db;Persist Security Info=False;User ID=${azurerm_key_vault_secret.keyvault_secret_mssql_dbadmin.value};Password=${azurerm_key_vault_secret.keyvault_secret_mssql_dbpassword.value};MultipleActiveResultSets=True;Encrypt=True;TrustServerCertificate=True;Connection Timeout=30;"
   key_vault_id = azurerm_key_vault.keyvault.id
+  depends_on   = [azurerm_private_dns_a_record.db_private_endpoint_a_record, azurerm_key_vault_access_policy.keyvault_currentuser_policy, azurerm_key_vault_access_policy.keyvault_azcli_policy]
 }
