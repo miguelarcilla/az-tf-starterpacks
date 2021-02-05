@@ -2,6 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: weather-share
+  labels:
+    aadpodidbinding: AKS_MI_NAME # Change
 spec: 
   replicas: 1
   selector:
@@ -11,10 +13,11 @@ spec:
     metadata:
       labels:
         app: weather-share
+        aadpodidbinding: AKS_MI_NAME # Change
     spec:
       containers:
       - name: weather-share
-        image: pbzxacr.azurecr.io/weather-share
+        image: ACR_NAME/weather-share:latest # Change
         resources:
           requests:
             cpu: 100m
@@ -25,30 +28,19 @@ spec:
         ports:
         - containerPort: 80
           name: http
+        env:
+        - name: "ASPNETCORE_ENVIRONMENT"
+          value: "Production"
+        - name: "AzureKeyVaultName"
+          value: "KEYVAULT_NAME" # Change
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: weather-share
 spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
   selector:
     app: weather-share
-  ports:
-  - protocol: TCP
-    port: 80
-    targetPort: 80
----
-apiVersion: extensions/v1beta1
-kind: Ingress
-metadata:
-  name: weather-share
-  annotations:
-    kubernetes.io/ingress.class: azure/application-gateway
-spec:
-  rules:
-  - http:
-      paths:
-      - path: /
-        backend:
-          serviceName: weather-share
-          servicePort: 80      
