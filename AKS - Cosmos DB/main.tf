@@ -295,6 +295,13 @@ resource "azurerm_role_assignment" "aks_role_appgwcontributor" {
   depends_on           = [azurerm_kubernetes_cluster.aks, azurerm_application_gateway.appgw]
 }
 
+resource "null_resource" "aks_add_appgwingress" {
+  provisioner "local-exec" {
+    command = "az aks enable-addons -n ${azurerm_kubernetes_cluster.aks.name} -g ${azurerm_resource_group.group.name} -a ingress-appgw --appgw-id ${azurerm_application_gateway.appgw.id}"
+  }
+  depends_on = [azurerm_kubernetes_cluster.aks, azurerm_application_gateway.appgw]
+}
+
 ##############################################################################
 # * Key Vault
 resource "azurerm_key_vault" "keyvault" {

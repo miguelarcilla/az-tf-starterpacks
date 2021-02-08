@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: weather-share
-        image: ACR_NAME/weather-share:latest # Change
+        image: ACR_NAME.azurecr.io/weather-share:latest # Change
         resources:
           requests:
             cpu: 100m
