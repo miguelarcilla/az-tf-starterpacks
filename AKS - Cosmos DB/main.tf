@@ -237,7 +237,11 @@ resource "azurerm_application_gateway" "appgw" {
   sku {
     name     = "WAF_v2"
     tier     = "WAF_v2"
-    capacity = 2
+  }
+
+  autoscale_configuration {
+    min_capacity = 1
+    max_capacity = 2
   }
 
   gateway_ip_configuration {
@@ -245,19 +249,14 @@ resource "azurerm_application_gateway" "appgw" {
     subnet_id = azurerm_subnet.appgw_subnet.id
   }
 
-  frontend_port {
-    name = "${var.solution_prefix}-appgw-http-port"
-    port = 80
-  }
-
-  frontend_port {
-    name = "${var.solution_prefix}-appgw-https-port"
-    port = 443
-  }
-
   frontend_ip_configuration {
     name                 = "${var.solution_prefix}-appgw-frontend-ipconfig"
     public_ip_address_id = azurerm_public_ip.appgw_ip.id
+  }
+
+  frontend_port {
+    name = "${var.solution_prefix}-appgw-http-port"
+    port = 80
   }
 
   backend_address_pool {
