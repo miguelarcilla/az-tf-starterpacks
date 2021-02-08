@@ -2,8 +2,15 @@
 # Minimum Terraform version required: 0.13
 # This Terraform configuration will create the following:
 #
-# Resource group with a virtual network and standard subnets
-# An Ubuntu Linux server running Apache
+# Solution Resource Group
+# Virtual Network and subnets
+# Azure Container Registry
+# Log Analytics and Container Insights Configuration
+# Azure Kubernetes Service with User-Managed Identity
+#   Configuration scripts for AAD Pod Identity and Application Gateway Ingress
+# Azure Key Vault and SQL Azure Database secrets
+# Application Gateway
+# SQL Azure Database with Private Link
 ##############################################################################
 # * Initialize providers
 
