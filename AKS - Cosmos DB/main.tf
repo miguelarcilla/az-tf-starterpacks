@@ -27,7 +27,11 @@ terraform {
 # Configure the Azure Provider
 provider "azurerm" {
   subscription_id = var.subscription_id
-  features {}
+  features {
+    key_vault {
+      purge_soft_delete_on_destroy = true
+    }
+  }
 }
 
 resource "random_id" "solution_random_suffix" {
@@ -182,6 +186,8 @@ resource "azurerm_kubernetes_cluster" "aks" {
   role_based_access_control {
     enabled = false
   }
+
+  depends_on = [azurerm_subnet.kubernetes_subnet]
 }
 
 resource "azurerm_role_assignment" "aks_role_mioperator" {
@@ -292,6 +298,8 @@ resource "azurerm_application_gateway" "appgw" {
     backend_address_pool_name  = "${var.solution_prefix}-appgw-backend-pool"
     backend_http_settings_name = "${var.solution_prefix}-appgw-http-settings"
   }
+
+  depends_on = [azurerm_subnet.appgw_subnet]
 }
 
 resource "azurerm_role_assignment" "aks_role_appgwcontributor" {
@@ -305,7 +313,7 @@ resource "null_resource" "aks_add_appgwingress" {
   provisioner "local-exec" {
     command = "az aks enable-addons -n ${azurerm_kubernetes_cluster.aks.name} -g ${azurerm_resource_group.group.name} -a ingress-appgw --appgw-id ${azurerm_application_gateway.appgw.id}"
   }
-  depends_on = [azurerm_kubernetes_cluster.aks, azurerm_application_gateway.appgw]
+  depends_on = [azurerm_kubernetes_cluster.aks, azurerm_application_gateway.appgw, null_resource.aks_update, null_resource.aks_add_podidentity]
 }
 
 ##############################################################################
@@ -327,14 +335,18 @@ resource "azurerm_key_vault_access_policy" "keyvault_currentuser_policy" {
     "get",
     "list",
     "set",
-    "delete"
+    "delete",
+    "recover",
+    "backup",
+    "restore",
+    "purge"
   ]
 }
 
 resource "azurerm_key_vault_access_policy" "keyvault_azcli_policy" {
   key_vault_id = azurerm_key_vault.keyvault.id
   tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+  object_id    = "d164374b-2521-4e1a-b04d-dcb438233b9b"
 
   secret_permissions = [
     "get",
@@ -398,6 +410,8 @@ resource "azurerm_mssql_server" "db_server" {
   administrator_login           = azurerm_key_vault_secret.keyvault_secret_mssql_dbadmin.value
   administrator_login_password  = azurerm_key_vault_secret.keyvault_secret_mssql_dbpassword.value
   public_network_access_enabled = false
+
+  depends_on = [azurerm_subnet.database_subnet]
 }
 
 resource "azurerm_mssql_database" "db" {
