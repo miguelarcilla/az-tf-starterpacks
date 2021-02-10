@@ -343,23 +343,6 @@ resource "azurerm_key_vault_access_policy" "keyvault_currentuser_policy" {
   ]
 }
 
-resource "azurerm_key_vault_access_policy" "keyvault_azcli_policy" {
-  key_vault_id = azurerm_key_vault.keyvault.id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = "d164374b-2521-4e1a-b04d-dcb438233b9b"
-
-  secret_permissions = [
-    "get",
-    "list",
-    "set",
-    "delete",
-    "recover",
-    "backup",
-    "restore",
-    "purge"
-  ]
-}
-
 resource "azurerm_key_vault_access_policy" "keyvault_aks_policy" {
   key_vault_id = azurerm_key_vault.keyvault.id
   tenant_id    = data.azurerm_client_config.current.tenant_id
@@ -390,14 +373,14 @@ resource "azurerm_key_vault_secret" "keyvault_secret_mssql_dbadmin" {
   name         = "mssql-dbadmin"
   value        = "4dm1n157r470r"
   key_vault_id = azurerm_key_vault.keyvault.id
-  depends_on   = [azurerm_key_vault_access_policy.keyvault_currentuser_policy , azurerm_key_vault_access_policy.keyvault_azcli_policy]
+  depends_on   = [azurerm_key_vault_access_policy.keyvault_currentuser_policy]
 }
 
 resource "azurerm_key_vault_secret" "keyvault_secret_mssql_dbpassword" {
   name         = "mssql-password"
   value        = "4-v3ry-53cr37-p455w0rd"
   key_vault_id = azurerm_key_vault.keyvault.id
-  depends_on   = [azurerm_key_vault_access_policy.keyvault_currentuser_policy , azurerm_key_vault_access_policy.keyvault_azcli_policy]
+  depends_on   = [azurerm_key_vault_access_policy.keyvault_currentuser_policy]
 }
 
 ##############################################################################
@@ -459,5 +442,5 @@ resource "azurerm_key_vault_secret" "keyvault_secret_mssql_dbconnstr" {
   name         = "mssql-dbconnstr"
   value        = "Server=tcp:${azurerm_private_dns_a_record.db_private_endpoint_a_record.fqdn},1433;Initial Catalog=${var.solution_prefix}-db;Persist Security Info=False;User ID=${azurerm_key_vault_secret.keyvault_secret_mssql_dbadmin.value};Password=${azurerm_key_vault_secret.keyvault_secret_mssql_dbpassword.value};MultipleActiveResultSets=True;Encrypt=True;TrustServerCertificate=True;Connection Timeout=30;"
   key_vault_id = azurerm_key_vault.keyvault.id
-  depends_on   = [azurerm_private_dns_a_record.db_private_endpoint_a_record, azurerm_key_vault_access_policy.keyvault_currentuser_policy, azurerm_key_vault_access_policy.keyvault_azcli_policy]
+  depends_on   = [azurerm_private_dns_a_record.db_private_endpoint_a_record, azurerm_key_vault_access_policy.keyvault_currentuser_policy]
 }
