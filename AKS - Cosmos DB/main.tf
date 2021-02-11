@@ -223,7 +223,7 @@ resource "azurerm_role_assignment" "aks_role_acrpull" {
   scope                = azurerm_container_registry.acr.id
   role_definition_name = "AcrPull"
   principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
-  depends_on           = [azurerm_kubernetes_cluster.aks, azurerm_container_registry.acr]
+  depends_on = [azurerm_kubernetes_cluster.aks, azurerm_application_gateway.appgw, null_resource.aks_update, null_resource.aks_add_podidentity]
 }
 
 # ##############################################################################

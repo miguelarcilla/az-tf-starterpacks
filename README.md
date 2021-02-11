@@ -41,6 +41,21 @@ git push --set-upstream origin feature/<BRANCH_NAME>
 
 ## Development 
 
+### PreRequisites
+
+Register the Below modules under the subscription that you will be working with,
+```
+az feature register --name EnablePodIdentityPreview --namespace Microsoft.ContainerService
+az provider register -n Microsoft.ContainerService
+az extension add --name aks-preview
+az extension update --name aks-preview --debug
+ 
+az feature register --name AKS-IngressApplicationGatewayAddon --namespace Microsoft.ContainerService
+az provider register --namespace Microsoft.ContainerService
+```
+
+### Execution
+
 Step 1 : Rename the azure container registry name in the varaibles.tf file to unique one "variable "acr_name" under the folder "AKS - Cosmos DB"
 
 Step 2 : Add a file named "terraform.tfvars" to the same directory as "main.tf" and define the variables such as
