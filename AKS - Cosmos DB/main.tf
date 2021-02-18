@@ -181,6 +181,10 @@ resource "azurerm_kubernetes_cluster" "aks" {
       enabled                    = true
       log_analytics_workspace_id = azurerm_log_analytics_workspace.la_workspace.id
     }
+
+    azure_policy {
+      enabled = true
+    }
   }
 
   role_based_access_control {
@@ -297,6 +301,19 @@ resource "azurerm_application_gateway" "appgw" {
     http_listener_name         = "${var.solution_prefix}-appgw-http-listener"
     backend_address_pool_name  = "${var.solution_prefix}-appgw-backend-pool"
     backend_http_settings_name = "${var.solution_prefix}-appgw-http-settings"
+  }
+
+  # Application Gateway properties are modified by Kubernetes as Ingress features are applied,
+  # adding a lifecycle block ignores updates to those properties after resource creation
+  lifecycle {
+    ignore_changes = [
+      tags,
+      backend_address_pool,
+      backend_http_settings,
+      http_listener,
+      request_routing_rule,
+      probe
+    ]
   }
 
   depends_on = [azurerm_subnet.appgw_subnet]
