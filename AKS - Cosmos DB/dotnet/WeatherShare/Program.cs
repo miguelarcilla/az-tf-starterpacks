@@ -27,8 +27,9 @@ namespace WeatherShare
                 var services = scope.ServiceProvider;
                 try
                 {
-                    var context = services.GetRequiredService<WeatherShareContext>();
-                    DbInitializer.Initialize(context);
+                    var userContext = services.GetRequiredService<UserContext>();
+                    var WeatherReportContext = services.GetRequiredService<WeatherReportContext>();
+                    DbInitializer.Initialize(userContext, WeatherReportContext);
                 }
                 catch (Exception ex)
                 {
