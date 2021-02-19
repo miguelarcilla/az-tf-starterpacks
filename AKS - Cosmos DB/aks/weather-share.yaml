@@ -35,7 +35,7 @@ spec:
           value: "KEYVAULT_NAME" # Change
         livenessProbe:
             httpGet:
-              path: /weatherforecast
+              path: /api/weatherforecast
               port: 80
             periodSeconds: 3
             timeoutSeconds: 30
