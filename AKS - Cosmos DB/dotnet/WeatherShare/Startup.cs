@@ -32,15 +32,20 @@ namespace WeatherShare
         {
             if (_env.IsDevelopment())
             {
-                services.AddDbContext<WeatherShareContext>(options =>
+                services.AddDbContext<UserContext>(options =>
                     options.UseSqlServer(Configuration.GetConnectionString("DefaultConnection")));
             }
             else
             {
-                services.AddDbContext<WeatherShareContext>(options =>
+                services.AddDbContext<UserContext>(options =>
                     options.UseSqlServer(Configuration["mssql-dbconnstr"]));
             }
 
+            services.AddDbContext<WeatherReportContext>(options =>
+                    options.UseCosmos(
+                        Configuration["cosmosdb-accountendpoint"],
+                        Configuration["cosmosdb-primarykey"],
+                        databaseName: "weather-share-cosmosdb"));
 
             services.AddControllers();
             services.AddSwaggerGen(c =>
