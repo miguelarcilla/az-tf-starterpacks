@@ -14,9 +14,9 @@ namespace WeatherShare.Controllers
     [ApiController]
     public class WeatherReportsController : ControllerBase
     {
-        private readonly WeatherShareContext _context;
+        private readonly WeatherReportContext _context;
 
-        public WeatherReportsController(WeatherShareContext context)
+        public WeatherReportsController(WeatherReportContext context)
         {
             _context = context;
         }
