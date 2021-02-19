@@ -11,6 +11,7 @@
 # Azure Key Vault and SQL Azure Database secrets
 # Application Gateway
 # SQL Azure Database with Private Link
+# Cosmos DB Account with Private Link
 ##############################################################################
 # * Initialize providers
 
@@ -303,8 +304,8 @@ resource "azurerm_application_gateway" "appgw" {
     backend_http_settings_name = "${var.solution_prefix}-appgw-http-settings"
   }
 
-  # Application Gateway properties are modified by Kubernetes as Ingress features are applied,
-  # adding a lifecycle block ignores updates to those properties after resource creation
+  ### Application Gateway properties are modified by Kubernetes as Ingress features are applied,
+  ### adding a lifecycle block ignores updates to those properties after resource creation
   lifecycle {
     ignore_changes = [
       tags,
@@ -411,6 +412,12 @@ resource "azurerm_mssql_server" "db_server" {
   administrator_login_password  = azurerm_key_vault_secret.keyvault_secret_mssql_dbpassword.value
   public_network_access_enabled = false
 
+  lifecycle {
+    ignore_changes = [ 
+      identity
+     ]
+  }
+
   depends_on = [azurerm_subnet.database_subnet]
 }
 
@@ -452,7 +459,7 @@ resource "azurerm_private_dns_zone_virtual_network_link" "db_private_dns_zone_vn
   resource_group_name   = azurerm_resource_group.group.name
   private_dns_zone_name = azurerm_private_dns_zone.db_private_dns_zone.name
   virtual_network_id    = azurerm_virtual_network.vnet.id
-  registration_enabled  = true
+  registration_enabled  = false
 }
 
 resource "azurerm_key_vault_secret" "keyvault_secret_mssql_dbconnstr" {
@@ -460,4 +467,95 @@ resource "azurerm_key_vault_secret" "keyvault_secret_mssql_dbconnstr" {
   value        = "Server=tcp:${azurerm_private_dns_a_record.db_private_endpoint_a_record.fqdn},1433;Initial Catalog=${var.solution_prefix}-db;Persist Security Info=False;User ID=${azurerm_key_vault_secret.keyvault_secret_mssql_dbadmin.value};Password=${azurerm_key_vault_secret.keyvault_secret_mssql_dbpassword.value};MultipleActiveResultSets=True;Encrypt=True;TrustServerCertificate=True;Connection Timeout=30;"
   key_vault_id = azurerm_key_vault.keyvault.id
   depends_on   = [azurerm_private_dns_a_record.db_private_endpoint_a_record, azurerm_key_vault_access_policy.keyvault_currentuser_policy]
+}
+
+##############################################################################
+# * Cosmos DB
+resource "azurerm_cosmosdb_account" "cosmosdb" {
+  name                      = "${var.solution_prefix}-${random_id.solution_random_suffix.dec}-cosmosdb-server"
+  location                  = var.location
+  resource_group_name       = azurerm_resource_group.group.name
+  offer_type                = "Standard"
+  kind                      = "GlobalDocumentDB"
+  # enable_free_tier          = true
+
+  capabilities {
+    name = "EnableServerless"
+  }
+
+  consistency_policy {
+    consistency_level       = "BoundedStaleness"
+    max_interval_in_seconds = 10
+    max_staleness_prefix    = 200
+  }
+
+  geo_location {
+    location          = var.location
+    failover_priority = 0
+  }
+}
+
+resource "azurerm_cosmosdb_sql_database" "cosmosdb_sql_db" {
+  name                = "weather-share-cosmosdb"
+  resource_group_name = azurerm_resource_group.group.name
+  account_name        = azurerm_cosmosdb_account.cosmosdb.name
+  ### Throughput should not be set when azurerm_cosmosdb_account is configured with EnableServerless capability
+  # throughput          = 400
+}
+
+resource "azurerm_private_endpoint" "cosmosdb_private_endpoint" {
+  name                     = "${azurerm_cosmosdb_account.cosmosdb.name}-private-endpoint"
+  location                 = var.location
+  resource_group_name      = azurerm_resource_group.group.name
+  subnet_id                = azurerm_subnet.database_subnet.id
+
+  private_service_connection {
+    name                           = "${azurerm_cosmosdb_account.cosmosdb.name}-private-link"
+    is_manual_connection           = "false"
+    private_connection_resource_id = azurerm_cosmosdb_account.cosmosdb.id
+    subresource_names              = ["Sql"]
+  }
+}
+
+resource "azurerm_private_dns_zone" "cosmosdb_private_dns_zone" {
+  name                = "privatelink.documents.azure.com"
+  resource_group_name = azurerm_resource_group.group.name
+}
+
+resource "azurerm_private_dns_a_record" "cosmosdb_private_endpoint_a_record" {
+  name                = azurerm_cosmosdb_account.cosmosdb.name
+  zone_name           = azurerm_private_dns_zone.cosmosdb_private_dns_zone.name
+  resource_group_name = azurerm_resource_group.group.name
+  ttl                 = 10
+  records             = [azurerm_private_endpoint.cosmosdb_private_endpoint.custom_dns_configs.0.ip_addresses.0]
+}
+
+resource "azurerm_private_dns_a_record" "cosmosdb_private_endpoint_region1_a_record" {
+  name                = "${azurerm_cosmosdb_account.cosmosdb.name}-${var.location}"
+  zone_name           = azurerm_private_dns_zone.cosmosdb_private_dns_zone.name
+  resource_group_name = azurerm_resource_group.group.name
+  ttl                 = 10
+  records             = [azurerm_private_endpoint.cosmosdb_private_endpoint.custom_dns_configs.1.ip_addresses.0]
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "cosmosdb_private_dns_zone_vnet_link" {
+  name                  = "${azurerm_cosmosdb_account.cosmosdb.name}-vnet-link"
+  resource_group_name   = azurerm_resource_group.group.name
+  private_dns_zone_name = azurerm_private_dns_zone.cosmosdb_private_dns_zone.name
+  virtual_network_id    = azurerm_virtual_network.vnet.id
+  registration_enabled  = false
+}
+
+resource "azurerm_key_vault_secret" "keyvault_secret_cosmosdb_accountendpoint" {
+  name         = "cosmosdb-accountendpoint"
+  value        = azurerm_cosmosdb_account.cosmosdb.endpoint
+  key_vault_id = azurerm_key_vault.keyvault.id
+  depends_on   = [azurerm_cosmosdb_account.cosmosdb, azurerm_key_vault_access_policy.keyvault_currentuser_policy]
+}
+
+resource "azurerm_key_vault_secret" "keyvault_secret_cosmosdb_primarykey" {
+  name         = "cosmosdb-primarykey"
+  value        = azurerm_cosmosdb_account.cosmosdb.primary_master_key
+  key_vault_id = azurerm_key_vault.keyvault.id
+  depends_on   = [azurerm_cosmosdb_account.cosmosdb, azurerm_key_vault_access_policy.keyvault_currentuser_policy]
 }
