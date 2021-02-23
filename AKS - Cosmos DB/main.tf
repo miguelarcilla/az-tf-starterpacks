@@ -14,6 +14,7 @@
 #
 # Solution Resource Group
 # Virtual Network and subnets
+# Network Security Groups
 # Azure Container Registry
 # Log Analytics and Container Insights Configuration
 # Azure Kubernetes Service with User-Managed Identity
@@ -88,6 +89,55 @@ resource "azurerm_subnet" "database_subnet" {
   resource_group_name                             = azurerm_resource_group.group.name
   address_prefixes                                = ["172.16.5.0/24"]
   enforce_private_link_endpoint_network_policies  = true
+}
+
+##############################################################################
+# * Network Security Groups
+resource "azurerm_network_security_group" "appgw_nsg" {
+  name                = "${var.solution_prefix}-subnet-appgateway-nsg"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.group.name
+
+  security_rule {
+    name                       = "AllowHttp"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "AllowHttps"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "AllowAppGatewayManager"
+    priority                   = 120
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "65200-65535"
+    source_address_prefix      = "GatewayManager"
+    destination_address_prefix = "*"
+  }
+}
+
+resource "azurerm_subnet_network_security_group_association" "appgw_subnet_nsg_assoc" {
+  subnet_id                 = azurerm_subnet.appgw_subnet.id
+  network_security_group_id = azurerm_network_security_group.appgw_nsg.id
 }
 
 ##############################################################################
