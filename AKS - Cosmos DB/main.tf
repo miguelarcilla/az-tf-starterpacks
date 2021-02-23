@@ -559,3 +559,66 @@ resource "azurerm_key_vault_secret" "keyvault_secret_cosmosdb_primarykey" {
   key_vault_id = azurerm_key_vault.keyvault.id
   depends_on   = [azurerm_cosmosdb_account.cosmosdb, azurerm_key_vault_access_policy.keyvault_currentuser_policy]
 }
+
+##############################################################################
+# * MariaDB
+resource "azurerm_mariadb_server" "mariadb_server" {
+  name                          = "${var.solution_prefix}-${random_id.solution_random_suffix.dec}-mariadb-server"
+  location                      = var.location
+  resource_group_name           = azurerm_resource_group.group.name
+  
+  administrator_login           = "A${azurerm_key_vault_secret.keyvault_secret_mssql_dbadmin.value}"
+  administrator_login_password  = azurerm_key_vault_secret.keyvault_secret_mssql_dbpassword.value
+  
+  version                       = "10.2"
+  sku_name                      = "GP_Gen5_2"
+  storage_mb                    = 5120
+
+  public_network_access_enabled = false
+  ssl_enforcement_enabled       = true
+  
+  depends_on = [azurerm_subnet.database_subnet]
+}
+
+resource "azurerm_mariadb_database" "mariadb" {
+  name                = "${var.solution_prefix}mariadb"
+  resource_group_name = azurerm_resource_group.group.name
+  server_name         = azurerm_mariadb_server.mariadb_server.name
+  charset             = "utf8"
+  collation           = "utf8_general_ci"
+}
+
+resource "azurerm_private_endpoint" "mariadb_private_endpoint" {
+  name                     = "${azurerm_mariadb_server.mariadb_server.name}-private-endpoint"
+  location                 = var.location
+  resource_group_name      = azurerm_resource_group.group.name
+  subnet_id                = azurerm_subnet.database_subnet.id
+
+  private_service_connection {
+    name                           = "${azurerm_mariadb_server.mariadb_server.name}-private-link"
+    is_manual_connection           = "false"
+    private_connection_resource_id = azurerm_mariadb_server.mariadb_server.id
+    subresource_names              = ["mariadbServer"]
+  }
+}
+
+resource "azurerm_private_dns_zone" "mariadb_private_dns_zone" {
+  name                = "privatelink.mariadb.database.azure.com"
+  resource_group_name = azurerm_resource_group.group.name
+}
+
+resource "azurerm_private_dns_a_record" "mariadb_private_endpoint_a_record" {
+  name                = azurerm_mariadb_server.mariadb_server.name
+  zone_name           = azurerm_private_dns_zone.mariadb_private_dns_zone.name
+  resource_group_name = azurerm_resource_group.group.name
+  ttl                 = 10
+  records             = [azurerm_private_endpoint.mariadb_private_endpoint.private_service_connection.0.private_ip_address]
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "mariadb_private_dns_zone_vnet_link" {
+  name                  = "${azurerm_mariadb_server.mariadb_server.name}-vnet-link"
+  resource_group_name   = azurerm_resource_group.group.name
+  private_dns_zone_name = azurerm_private_dns_zone.mariadb_private_dns_zone.name
+  virtual_network_id    = azurerm_virtual_network.vnet.id
+  registration_enabled  = false
+}
