@@ -56,6 +56,8 @@ metadata:
   name: weather-share
   annotations:
     kubernetes.io/ingress.class: azure/application-gateway
+    appgw.ingress.kubernetes.io/appgw-ssl-certificate: KEYVAULT_SSLCERT_NAME # Change
+    appgw.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
   rules:
   - http:

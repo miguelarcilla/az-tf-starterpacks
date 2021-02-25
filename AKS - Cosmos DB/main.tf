@@ -1,9 +1,20 @@
 ##############################################################################
+# THESE SCRIPTS, INCLUDING ANY ADDITIONAL CONTENT CONTRIBUTED BY MICROSOFT 
+# OR ANY 3RD PARTY, IS PROVIDED ON AN "AS-IS" BASIS, AND MICROSOFT GIVES NO 
+# EXPRESS WARRANTIES, GUARANTEES OR CONDITIONS. TO THE EXTENT PERMITTED BY 
+# APPLICABLE LAW, MICROSOFT DISCLAIMS THE IMPLIED WARRANTIES OF 
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. 
+# YOUR USE OF THE SCRIPT AND ADDITIONAL CONTENT IS AT YOUR SOLE
+# RISK AND RESPONSIBILITY.
+##############################################################################
+
+##############################################################################
 # Minimum Terraform version required: 0.13
 # This Terraform configuration will create the following:
 #
 # Solution Resource Group
 # Virtual Network and subnets
+# Network Security Groups
 # Azure Container Registry
 # Log Analytics and Container Insights Configuration
 # Azure Kubernetes Service with User-Managed Identity
@@ -36,7 +47,7 @@ provider "azurerm" {
 }
 
 resource "random_id" "solution_random_suffix" {
-    byte_length = 8
+    byte_length = 4
 }
 
 data "azurerm_client_config" "current" {
@@ -54,7 +65,7 @@ resource "azurerm_resource_group" "group" {
 resource "azurerm_virtual_network" "vnet" {
   name                = "${var.solution_prefix}-vnet"
   location            = var.location
-  address_space       = ["172.16.0.0/20"]
+  address_space       = ["172.16.0.0/21"]
   resource_group_name = azurerm_resource_group.group.name
 }
 
@@ -69,21 +80,70 @@ resource "azurerm_subnet" "appgw_subnet" {
   name                 = "AppGatewaySubnet"
   virtual_network_name = azurerm_virtual_network.vnet.name
   resource_group_name  = azurerm_resource_group.group.name
-  address_prefixes     = ["172.16.4.0/22"]
+  address_prefixes     = ["172.16.4.0/24"]
 }
 
 resource "azurerm_subnet" "database_subnet" {
   name                                            = "DatabaseSubnet"
   virtual_network_name                            = azurerm_virtual_network.vnet.name
   resource_group_name                             = azurerm_resource_group.group.name
-  address_prefixes                                = ["172.16.8.0/22"]
+  address_prefixes                                = ["172.16.5.0/24"]
   enforce_private_link_endpoint_network_policies  = true
+}
+
+##############################################################################
+# * Network Security Groups
+resource "azurerm_network_security_group" "appgw_nsg" {
+  name                = "${var.solution_prefix}-subnet-appgateway-nsg"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.group.name
+
+  security_rule {
+    name                       = "AllowHttp"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "AllowHttps"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "AllowAppGatewayManager"
+    priority                   = 120
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "65200-65535"
+    source_address_prefix      = "GatewayManager"
+    destination_address_prefix = "*"
+  }
+}
+
+resource "azurerm_subnet_network_security_group_association" "appgw_subnet_nsg_assoc" {
+  subnet_id                 = azurerm_subnet.appgw_subnet.id
+  network_security_group_id = azurerm_network_security_group.appgw_nsg.id
 }
 
 ##############################################################################
 # * Container Registry
 resource "azurerm_container_registry" "acr" {
-  name                = "${var.solution_prefix}acr"
+  name                = "${var.solution_prefix}acr${random_id.solution_random_suffix.dec}"
   location            = var.location
   resource_group_name = azurerm_resource_group.group.name
   sku                 = "Basic"
@@ -189,7 +249,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 
   role_based_access_control {
-    enabled = false
+    enabled = true
   }
 
   depends_on = [azurerm_subnet.kubernetes_subnet]
@@ -247,10 +307,21 @@ resource "azurerm_public_ip" "appgw_ip" {
   sku                 = "Standard"
 }
 
+resource "azurerm_user_assigned_identity" "appgw_mi" {
+  name                = "${var.solution_prefix}-appgw-mi"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.group.name
+}
+
 resource "azurerm_application_gateway" "appgw" {
   name                = "${var.solution_prefix}-appgw"
   location            = var.location
   resource_group_name = azurerm_resource_group.group.name
+
+  identity {
+    type = "UserAssigned"
+    identity_ids = [ azurerm_user_assigned_identity.appgw_mi.id ]
+  }
 
   sku {
     name     = "WAF_v2"
@@ -258,7 +329,7 @@ resource "azurerm_application_gateway" "appgw" {
   }
 
   autoscale_configuration {
-    min_capacity = 1
+    min_capacity = 0
     max_capacity = 2
   }
 
@@ -304,6 +375,11 @@ resource "azurerm_application_gateway" "appgw" {
     backend_http_settings_name = "${var.solution_prefix}-appgw-http-settings"
   }
 
+  ssl_certificate {
+    name                = azurerm_key_vault_certificate.keyvault_cert_appgwssl.name
+    key_vault_secret_id = azurerm_key_vault_certificate.keyvault_cert_appgwssl.secret_id
+  }
+
   ### Application Gateway properties are modified by Kubernetes as Ingress features are applied,
   ### adding a lifecycle block ignores updates to those properties after resource creation
   lifecycle {
@@ -313,11 +389,20 @@ resource "azurerm_application_gateway" "appgw" {
       backend_http_settings,
       http_listener,
       request_routing_rule,
-      probe
+      probe,
+      frontend_port,
+      redirect_configuration
     ]
   }
 
   depends_on = [azurerm_subnet.appgw_subnet]
+}
+
+resource "azurerm_role_assignment" "appgw_role_mioperator" {
+  scope                = azurerm_user_assigned_identity.appgw_mi.id
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = azurerm_user_assigned_identity.appgw_mi.principal_id
+  depends_on           = [azurerm_application_gateway.appgw]
 }
 
 resource "azurerm_role_assignment" "aks_role_appgwcontributor" {
@@ -337,7 +422,7 @@ resource "null_resource" "aks_add_appgwingress" {
 ##############################################################################
 # * Key Vault
 resource "azurerm_key_vault" "keyvault" {
-  name                = "${var.solution_prefix}-keyvault"
+  name                = "${var.solution_prefix}-${random_id.solution_random_suffix.dec}-keyvault"
   location            = var.location
   resource_group_name = azurerm_resource_group.group.name
   sku_name            = "standard"
@@ -359,6 +444,25 @@ resource "azurerm_key_vault_access_policy" "keyvault_currentuser_policy" {
     "restore",
     "purge"
   ]
+
+  certificate_permissions = [
+    "get",
+    "list",
+    "update",
+    "create",
+    "import",
+    "delete",
+    "recover",
+    "backup",
+    "restore",
+    "manageContacts",
+    "manageIssuers",
+    "getIssuers",
+    "listIssuers",
+    "setIssuers",
+    "deleteIssuers",
+    "purge"
+  ]
 }
 
 resource "azurerm_key_vault_access_policy" "keyvault_aks_policy" {
@@ -368,9 +472,7 @@ resource "azurerm_key_vault_access_policy" "keyvault_aks_policy" {
 
   secret_permissions = [
     "get",
-    "list",
-    "set",
-    "delete"
+    "list"
   ]
 }
 
@@ -381,10 +483,71 @@ resource "azurerm_key_vault_access_policy" "keyvault_aksmi_policy" {
 
   secret_permissions = [
     "get",
-    "list",
-    "set",
-    "delete"
+    "list"
   ]
+}
+
+resource "azurerm_key_vault_access_policy" "keyvault_appgwmi_policy" {
+  key_vault_id = azurerm_key_vault.keyvault.id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = azurerm_user_assigned_identity.appgw_mi.principal_id
+
+  secret_permissions = [
+    "get"
+  ]
+  certificate_permissions = [
+    "get"
+  ]
+}
+
+resource "azurerm_key_vault_certificate" "keyvault_cert_appgwssl" {
+  name         = "${var.solution_prefix}-appgwsslcert"
+  key_vault_id = azurerm_key_vault.keyvault.id
+
+  certificate_policy {
+    issuer_parameters {
+      name = "Self"
+    }
+
+    key_properties {
+      exportable = true
+      key_size   = 2048
+      key_type   = "RSA"
+      reuse_key  = true
+    }
+
+    lifetime_action {
+      action {
+        action_type = "AutoRenew"
+      }
+
+      trigger {
+        days_before_expiry = 30
+      }
+    }
+
+    secret_properties {
+      content_type = "application/x-pkcs12"
+    }
+
+    x509_certificate_properties {
+      extended_key_usage = ["1.3.6.1.5.5.7.3.1"]
+
+      key_usage = [
+        "cRLSign",
+        "dataEncipherment",
+        "digitalSignature",
+        "keyAgreement",
+        "keyCertSign",
+        "keyEncipherment",
+      ]
+
+      subject            = "CN=${var.solution_prefix}"
+      validity_in_months = 12
+    }
+  }
+  
+  depends_on = [azurerm_key_vault_access_policy.keyvault_currentuser_policy]
 }
 
 resource "azurerm_key_vault_secret" "keyvault_secret_mssql_dbadmin" {
@@ -403,8 +566,8 @@ resource "azurerm_key_vault_secret" "keyvault_secret_mssql_dbpassword" {
 
 ##############################################################################
 # * SQL Azure Database
-resource "azurerm_mssql_server" "db_server" {
-  name                          = "${var.solution_prefix}-db-server"
+resource "azurerm_mssql_server" "sqldb_server" {
+  name                          = "${var.solution_prefix}-${random_id.solution_random_suffix.dec}-db-server"
   location                      = var.location
   resource_group_name           = azurerm_resource_group.group.name
   version                       = "12.0"
@@ -421,52 +584,52 @@ resource "azurerm_mssql_server" "db_server" {
   depends_on = [azurerm_subnet.database_subnet]
 }
 
-resource "azurerm_mssql_database" "db" {
-  name                = "${var.solution_prefix}-db"
-  server_id           = azurerm_mssql_server.db_server.id
+resource "azurerm_mssql_database" "sqldb" {
+  name                = "${var.solution_prefix}-sqldb"
+  server_id           = azurerm_mssql_server.sqldb_server.id
   sku_name            = "S0"
 }
 
-resource "azurerm_private_endpoint" "db_private_endpoint" {
-  name                     = "${azurerm_mssql_server.db_server.name}-private-endpoint"
+resource "azurerm_private_endpoint" "sqldb_private_endpoint" {
+  name                     = "${azurerm_mssql_server.sqldb_server.name}-private-endpoint"
   location                 = var.location
   resource_group_name      = azurerm_resource_group.group.name
   subnet_id                = azurerm_subnet.database_subnet.id
 
   private_service_connection {
-    name                           = "${azurerm_mssql_server.db_server.name}-private-link"
+    name                           = "${azurerm_mssql_server.sqldb_server.name}-private-link"
     is_manual_connection           = "false"
-    private_connection_resource_id = azurerm_mssql_server.db_server.id
+    private_connection_resource_id = azurerm_mssql_server.sqldb_server.id
     subresource_names              = ["sqlServer"]
   }
 }
 
-resource "azurerm_private_dns_zone" "db_private_dns_zone" {
+resource "azurerm_private_dns_zone" "sqldb_private_dns_zone" {
   name                = "privatelink.database.windows.net"
   resource_group_name = azurerm_resource_group.group.name
 }
 
-resource "azurerm_private_dns_a_record" "db_private_endpoint_a_record" {
-  name                = azurerm_mssql_server.db_server.name
-  zone_name           = azurerm_private_dns_zone.db_private_dns_zone.name
+resource "azurerm_private_dns_a_record" "sqldb_private_endpoint_a_record" {
+  name                = azurerm_mssql_server.sqldb_server.name
+  zone_name           = azurerm_private_dns_zone.sqldb_private_dns_zone.name
   resource_group_name = azurerm_resource_group.group.name
   ttl                 = 10
-  records             = [azurerm_private_endpoint.db_private_endpoint.private_service_connection.0.private_ip_address]
+  records             = [azurerm_private_endpoint.sqldb_private_endpoint.private_service_connection.0.private_ip_address]
 }
 
-resource "azurerm_private_dns_zone_virtual_network_link" "db_private_dns_zone_vnet_link" {
-  name                  = "${azurerm_mssql_server.db_server.name}-vnet-link"
+resource "azurerm_private_dns_zone_virtual_network_link" "sqldb_private_dns_zone_vnet_link" {
+  name                  = "${azurerm_mssql_server.sqldb_server.name}-vnet-link"
   resource_group_name   = azurerm_resource_group.group.name
-  private_dns_zone_name = azurerm_private_dns_zone.db_private_dns_zone.name
+  private_dns_zone_name = azurerm_private_dns_zone.sqldb_private_dns_zone.name
   virtual_network_id    = azurerm_virtual_network.vnet.id
   registration_enabled  = false
 }
 
 resource "azurerm_key_vault_secret" "keyvault_secret_mssql_dbconnstr" {
   name         = "mssql-dbconnstr"
-  value        = "Server=tcp:${azurerm_private_dns_a_record.db_private_endpoint_a_record.fqdn},1433;Initial Catalog=${var.solution_prefix}-db;Persist Security Info=False;User ID=${azurerm_key_vault_secret.keyvault_secret_mssql_dbadmin.value};Password=${azurerm_key_vault_secret.keyvault_secret_mssql_dbpassword.value};MultipleActiveResultSets=True;Encrypt=True;TrustServerCertificate=True;Connection Timeout=30;"
+  value        = "Server=tcp:${azurerm_private_dns_a_record.sqldb_private_endpoint_a_record.fqdn},1433;Initial Catalog=${var.solution_prefix}-sqldb;Persist Security Info=False;User ID=${azurerm_key_vault_secret.keyvault_secret_mssql_dbadmin.value};Password=${azurerm_key_vault_secret.keyvault_secret_mssql_dbpassword.value};MultipleActiveResultSets=True;Encrypt=True;TrustServerCertificate=True;Connection Timeout=30;"
   key_vault_id = azurerm_key_vault.keyvault.id
-  depends_on   = [azurerm_private_dns_a_record.db_private_endpoint_a_record, azurerm_key_vault_access_policy.keyvault_currentuser_policy]
+  depends_on   = [azurerm_private_dns_a_record.sqldb_private_endpoint_a_record, azurerm_key_vault_access_policy.keyvault_currentuser_policy]
 }
 
 ##############################################################################
@@ -558,4 +721,67 @@ resource "azurerm_key_vault_secret" "keyvault_secret_cosmosdb_primarykey" {
   value        = azurerm_cosmosdb_account.cosmosdb.primary_master_key
   key_vault_id = azurerm_key_vault.keyvault.id
   depends_on   = [azurerm_cosmosdb_account.cosmosdb, azurerm_key_vault_access_policy.keyvault_currentuser_policy]
+}
+
+##############################################################################
+# * MariaDB
+resource "azurerm_mariadb_server" "mariadb_server" {
+  name                          = "${var.solution_prefix}-${random_id.solution_random_suffix.dec}-mariadb-server"
+  location                      = var.location
+  resource_group_name           = azurerm_resource_group.group.name
+  
+  administrator_login           = "A${azurerm_key_vault_secret.keyvault_secret_mssql_dbadmin.value}"
+  administrator_login_password  = azurerm_key_vault_secret.keyvault_secret_mssql_dbpassword.value
+  
+  version                       = "10.2"
+  sku_name                      = "GP_Gen5_2"
+  storage_mb                    = 5120
+
+  public_network_access_enabled = false
+  ssl_enforcement_enabled       = true
+  
+  depends_on = [azurerm_subnet.database_subnet]
+}
+
+resource "azurerm_mariadb_database" "mariadb" {
+  name                = "${var.solution_prefix}mariadb"
+  resource_group_name = azurerm_resource_group.group.name
+  server_name         = azurerm_mariadb_server.mariadb_server.name
+  charset             = "utf8"
+  collation           = "utf8_general_ci"
+}
+
+resource "azurerm_private_endpoint" "mariadb_private_endpoint" {
+  name                     = "${azurerm_mariadb_server.mariadb_server.name}-private-endpoint"
+  location                 = var.location
+  resource_group_name      = azurerm_resource_group.group.name
+  subnet_id                = azurerm_subnet.database_subnet.id
+
+  private_service_connection {
+    name                           = "${azurerm_mariadb_server.mariadb_server.name}-private-link"
+    is_manual_connection           = "false"
+    private_connection_resource_id = azurerm_mariadb_server.mariadb_server.id
+    subresource_names              = ["mariadbServer"]
+  }
+}
+
+resource "azurerm_private_dns_zone" "mariadb_private_dns_zone" {
+  name                = "privatelink.mariadb.database.azure.com"
+  resource_group_name = azurerm_resource_group.group.name
+}
+
+resource "azurerm_private_dns_a_record" "mariadb_private_endpoint_a_record" {
+  name                = azurerm_mariadb_server.mariadb_server.name
+  zone_name           = azurerm_private_dns_zone.mariadb_private_dns_zone.name
+  resource_group_name = azurerm_resource_group.group.name
+  ttl                 = 10
+  records             = [azurerm_private_endpoint.mariadb_private_endpoint.private_service_connection.0.private_ip_address]
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "mariadb_private_dns_zone_vnet_link" {
+  name                  = "${azurerm_mariadb_server.mariadb_server.name}-vnet-link"
+  resource_group_name   = azurerm_resource_group.group.name
+  private_dns_zone_name = azurerm_private_dns_zone.mariadb_private_dns_zone.name
+  virtual_network_id    = azurerm_virtual_network.vnet.id
+  registration_enabled  = false
 }
