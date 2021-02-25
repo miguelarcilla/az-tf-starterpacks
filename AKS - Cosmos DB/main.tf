@@ -307,10 +307,21 @@ resource "azurerm_public_ip" "appgw_ip" {
   sku                 = "Standard"
 }
 
+resource "azurerm_user_assigned_identity" "appgw_mi" {
+  name                = "${var.solution_prefix}-appgw-mi"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.group.name
+}
+
 resource "azurerm_application_gateway" "appgw" {
   name                = "${var.solution_prefix}-appgw"
   location            = var.location
   resource_group_name = azurerm_resource_group.group.name
+
+  identity {
+    type = "UserAssigned"
+    identity_ids = [ azurerm_user_assigned_identity.appgw_mi.id ]
+  }
 
   sku {
     name     = "WAF_v2"
@@ -318,7 +329,7 @@ resource "azurerm_application_gateway" "appgw" {
   }
 
   autoscale_configuration {
-    min_capacity = 1
+    min_capacity = 0
     max_capacity = 2
   }
 
@@ -364,6 +375,11 @@ resource "azurerm_application_gateway" "appgw" {
     backend_http_settings_name = "${var.solution_prefix}-appgw-http-settings"
   }
 
+  ssl_certificate {
+    name                = azurerm_key_vault_certificate.keyvault_cert_appgwssl.name
+    key_vault_secret_id = azurerm_key_vault_certificate.keyvault_cert_appgwssl.secret_id
+  }
+
   ### Application Gateway properties are modified by Kubernetes as Ingress features are applied,
   ### adding a lifecycle block ignores updates to those properties after resource creation
   lifecycle {
@@ -373,11 +389,20 @@ resource "azurerm_application_gateway" "appgw" {
       backend_http_settings,
       http_listener,
       request_routing_rule,
-      probe
+      probe,
+      frontend_port,
+      redirect_configuration
     ]
   }
 
   depends_on = [azurerm_subnet.appgw_subnet]
+}
+
+resource "azurerm_role_assignment" "appgw_role_mioperator" {
+  scope                = azurerm_user_assigned_identity.appgw_mi.id
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = azurerm_user_assigned_identity.appgw_mi.principal_id
+  depends_on           = [azurerm_application_gateway.appgw]
 }
 
 resource "azurerm_role_assignment" "aks_role_appgwcontributor" {
@@ -419,6 +444,25 @@ resource "azurerm_key_vault_access_policy" "keyvault_currentuser_policy" {
     "restore",
     "purge"
   ]
+
+  certificate_permissions = [
+    "get",
+    "list",
+    "update",
+    "create",
+    "import",
+    "delete",
+    "recover",
+    "backup",
+    "restore",
+    "manageContacts",
+    "manageIssuers",
+    "getIssuers",
+    "listIssuers",
+    "setIssuers",
+    "deleteIssuers",
+    "purge"
+  ]
 }
 
 resource "azurerm_key_vault_access_policy" "keyvault_aks_policy" {
@@ -428,9 +472,7 @@ resource "azurerm_key_vault_access_policy" "keyvault_aks_policy" {
 
   secret_permissions = [
     "get",
-    "list",
-    "set",
-    "delete"
+    "list"
   ]
 }
 
@@ -441,10 +483,71 @@ resource "azurerm_key_vault_access_policy" "keyvault_aksmi_policy" {
 
   secret_permissions = [
     "get",
-    "list",
-    "set",
-    "delete"
+    "list"
   ]
+}
+
+resource "azurerm_key_vault_access_policy" "keyvault_appgwmi_policy" {
+  key_vault_id = azurerm_key_vault.keyvault.id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = azurerm_user_assigned_identity.appgw_mi.principal_id
+
+  secret_permissions = [
+    "get"
+  ]
+  certificate_permissions = [
+    "get"
+  ]
+}
+
+resource "azurerm_key_vault_certificate" "keyvault_cert_appgwssl" {
+  name         = "${var.solution_prefix}-appgwsslcert"
+  key_vault_id = azurerm_key_vault.keyvault.id
+
+  certificate_policy {
+    issuer_parameters {
+      name = "Self"
+    }
+
+    key_properties {
+      exportable = true
+      key_size   = 2048
+      key_type   = "RSA"
+      reuse_key  = true
+    }
+
+    lifetime_action {
+      action {
+        action_type = "AutoRenew"
+      }
+
+      trigger {
+        days_before_expiry = 30
+      }
+    }
+
+    secret_properties {
+      content_type = "application/x-pkcs12"
+    }
+
+    x509_certificate_properties {
+      extended_key_usage = ["1.3.6.1.5.5.7.3.1"]
+
+      key_usage = [
+        "cRLSign",
+        "dataEncipherment",
+        "digitalSignature",
+        "keyAgreement",
+        "keyCertSign",
+        "keyEncipherment",
+      ]
+
+      subject            = "CN=${var.solution_prefix}"
+      validity_in_months = 12
+    }
+  }
+  
+  depends_on = [azurerm_key_vault_access_policy.keyvault_currentuser_policy]
 }
 
 resource "azurerm_key_vault_secret" "keyvault_secret_mssql_dbadmin" {
