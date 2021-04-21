@@ -54,6 +54,11 @@ az feature register --name AKS-IngressApplicationGatewayAddon --namespace Micros
 az provider register --namespace Microsoft.ContainerService
 ```
 
+### Architecture
+
+
+![alt text](https://raw.githubusercontent.com/sajeetharan/az-tf-starterpacks/k8s-dotnet-cosmos/AKS%20-%20Cosmos%20DB/assets/az-digram.jpg)
+
 ### Execution
 
 Step 1 : Rename the azure container registry name in the varaibles.tf file to unique one "variable "acr_name" under the folder "AKS - Cosmos DB"
