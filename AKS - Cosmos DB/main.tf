@@ -31,7 +31,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 2.73.0"
+      version = "~> 2.96.0"
     }
   }
 }
@@ -209,7 +209,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
   location            = var.location
   resource_group_name = azurerm_resource_group.group.name
   dns_prefix          = var.solution_prefix
-  kubernetes_version  = "1.20.5"
+  kubernetes_version  = "1.22.6"
   node_resource_group = "${var.solution_prefix}-nodes-rg"
 
   default_node_pool {
