@@ -6,7 +6,7 @@ import logging
 async def on_event(partition_context, event):
     # Print and log the event data.
     logger = logging.getLogger()
-    logger.info("Received the event: \"{}\" from the partition with ID: \"{}\"".format(event.body_as_str(encoding='UTF-8'), partition_context.partition_id))
+    logger.warning("Received the event: \"{}\" from the partition with ID: \"{}\"".format(event.body_as_str(encoding='UTF-8'), partition_context.partition_id))
     print("Received the event: \"{}\" from the partition with ID: \"{}\"".format(event.body_as_str(encoding='UTF-8'), partition_context.partition_id))
 
     # Update the checkpoint so that the program doesn't read the events
@@ -16,7 +16,7 @@ async def on_event(partition_context, event):
 async def main():
     # Create and configure logger
     logging.basicConfig()
-    logging.getLogger().setLevel(logging.INFO)
+    logging.getLogger().setLevel(logging.WARNING)
 
     # Create an Azure blob checkpoint store to store the checkpoints.
     checkpoint_store = BlobCheckpointStore.from_connection_string(
