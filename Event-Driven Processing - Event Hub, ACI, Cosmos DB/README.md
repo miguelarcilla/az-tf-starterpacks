@@ -47,5 +47,10 @@
     az acr login -n ACR_NAME # Authenticate into the Azure Container Registry
     docker push ACR_NAME.azurecr.io/receivepy:latest # Push the Docker image to the Azure Container Registry
     ```
+
+**TO-DO - THE FOLLOWING SECTION HAS NOT YET BEEN IMPLEMENTED**
+
+8. At this point, the first layer of Azure resources and the container that listens to the Event Hub have been deployed. Navigate to [tf-deployment-layers/layer-2](./tf-deployment-layers/layer-2/) to deploy the Azure Container Instances.
+
 ## Further help
 If you encountered issues or would like to suggest improvements to these samples, create an issue [here](https://github.com/miguelarcilla/az-tf-starterpacks/issues).
