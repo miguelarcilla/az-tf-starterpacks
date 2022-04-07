@@ -6,7 +6,9 @@ async def run():
     # Create a producer client to send messages to the event hub.
     # Specify a connection string to your event hubs namespace and
     # the event hub name.
-    producer = EventHubProducerClient.from_connection_string(conn_str="", eventhub_name="")
+    producer = EventHubProducerClient.from_connection_string(
+        conn_str="AZURE_EVENTHUB_CONNECTION_STRING", 
+        eventhub_name="AZURE_EVENTHUB_NAME")
     async with producer:
         # Create a batch.
         event_data_batch = await producer.create_batch()
