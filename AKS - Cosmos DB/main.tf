@@ -31,7 +31,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 2.96.0"
+      version = "~> 3.12.0"
     }
   }
 }
@@ -221,7 +221,9 @@ resource "azurerm_kubernetes_cluster" "aks" {
 
   identity {
     type = "UserAssigned"
-    user_assigned_identity_id = azurerm_user_assigned_identity.aks_mi.id
+    identity_ids = [
+      azurerm_user_assigned_identity.aks_mi.id
+    ]
   }
 
   network_profile {
@@ -229,27 +231,12 @@ resource "azurerm_kubernetes_cluster" "aks" {
     network_policy = "azure"
   }
 
-  addon_profile {
-    kube_dashboard {
-      enabled = false
-    }
-
-    http_application_routing {
-      enabled = false
-    }
-
-    oms_agent {
-      enabled                    = true
-      log_analytics_workspace_id = azurerm_log_analytics_workspace.la_workspace.id
-    }
-
-    azure_policy {
-      enabled = true
-    }
+  ingress_application_gateway {
+    gateway_id = azurerm_application_gateway.appgw.id
   }
 
-  role_based_access_control {
-    enabled = true
+  oms_agent {
+    log_analytics_workspace_id = azurerm_log_analytics_workspace.la_workspace.id
   }
 
   depends_on = [azurerm_subnet.kubernetes_subnet]
@@ -373,6 +360,7 @@ resource "azurerm_application_gateway" "appgw" {
     http_listener_name         = "${var.solution_prefix}-appgw-http-listener"
     backend_address_pool_name  = "${var.solution_prefix}-appgw-backend-pool"
     backend_http_settings_name = "${var.solution_prefix}-appgw-http-settings"
+    priority                   = 10
   }
 
   ssl_certificate {
@@ -412,13 +400,6 @@ resource "azurerm_role_assignment" "aks_role_appgwcontributor" {
   depends_on           = [azurerm_kubernetes_cluster.aks, azurerm_application_gateway.appgw]
 }
 
-resource "null_resource" "aks_add_appgwingress" {
-  provisioner "local-exec" {
-    command = "az aks enable-addons -n ${azurerm_kubernetes_cluster.aks.name} -g ${azurerm_resource_group.group.name} -a ingress-appgw --appgw-id ${azurerm_application_gateway.appgw.id}"
-  }
-  depends_on = [azurerm_kubernetes_cluster.aks, azurerm_application_gateway.appgw, null_resource.aks_update, null_resource.aks_add_podidentity]
-}
-
 ##############################################################################
 # * Key Vault
 resource "azurerm_key_vault" "keyvault" {
@@ -435,33 +416,33 @@ resource "azurerm_key_vault_access_policy" "keyvault_currentuser_policy" {
   object_id    = data.azurerm_client_config.current.object_id
 
   secret_permissions = [
-    "get",
-    "list",
-    "set",
-    "delete",
-    "recover",
-    "backup",
-    "restore",
-    "purge"
+    "Backup",
+    "Delete",
+    "Get",
+    "List",
+    "Purge",
+    "Recover",
+    "Restore",
+    "Set"
   ]
-
+  
   certificate_permissions = [
-    "get",
-    "list",
-    "update",
-    "create",
-    "import",
-    "delete",
-    "recover",
-    "backup",
-    "restore",
-    "manageContacts",
-    "manageIssuers",
-    "getIssuers",
-    "listIssuers",
-    "setIssuers",
-    "deleteIssuers",
-    "purge"
+    "Backup",
+    "Create",
+    "Delete",
+    "DeleteIssuers",
+    "Get",
+    "GetIssuers",
+    "Import",
+    "List",
+    "ListIssuers",
+    "ManageContacts",
+    "ManageIssuers",
+    "Purge",
+    "Recover",
+    "Restore",
+    "SetIssuers",
+    "Update"
   ]
 }
 
@@ -471,8 +452,8 @@ resource "azurerm_key_vault_access_policy" "keyvault_aks_policy" {
   object_id    = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
 
   secret_permissions = [
-    "get",
-    "list"
+    "Get",
+    "List"
   ]
 }
 
@@ -482,8 +463,8 @@ resource "azurerm_key_vault_access_policy" "keyvault_aksmi_policy" {
   object_id    = azurerm_user_assigned_identity.aks_mi.principal_id
 
   secret_permissions = [
-    "get",
-    "list"
+    "Get",
+    "List"
   ]
 }
 
@@ -493,10 +474,10 @@ resource "azurerm_key_vault_access_policy" "keyvault_appgwmi_policy" {
   object_id    = azurerm_user_assigned_identity.appgw_mi.principal_id
 
   secret_permissions = [
-    "get"
+    "Get"
   ]
   certificate_permissions = [
-    "get"
+    "Get"
   ]
 }
 
@@ -718,7 +699,7 @@ resource "azurerm_key_vault_secret" "keyvault_secret_cosmosdb_accountendpoint" {
 
 resource "azurerm_key_vault_secret" "keyvault_secret_cosmosdb_primarykey" {
   name         = "cosmosdb-primarykey"
-  value        = azurerm_cosmosdb_account.cosmosdb.primary_master_key
+  value        = azurerm_cosmosdb_account.cosmosdb.primary_key
   key_vault_id = azurerm_key_vault.keyvault.id
   depends_on   = [azurerm_cosmosdb_account.cosmosdb, azurerm_key_vault_access_policy.keyvault_currentuser_policy]
 }
