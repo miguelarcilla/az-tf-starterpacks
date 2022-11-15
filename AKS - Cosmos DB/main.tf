@@ -156,7 +156,7 @@ resource "azurerm_log_analytics_workspace" "la_workspace" {
     name                = "${var.solution_prefix}-${random_id.solution_random_suffix.dec}-workspace"
     location            = var.location
     resource_group_name = azurerm_resource_group.group.name
-    sku                 = "Free"
+    sku                 = "PerGB2018"
 }
 
 resource "azurerm_log_analytics_solution" "la_solution_containerinsights" {
@@ -209,7 +209,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
   location            = var.location
   resource_group_name = azurerm_resource_group.group.name
   dns_prefix          = var.solution_prefix
-  kubernetes_version  = "1.22.6"
+  kubernetes_version  = "1.24.6"
   node_resource_group = "${var.solution_prefix}-nodes-rg"
 
   default_node_pool {
